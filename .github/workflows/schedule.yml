@@ -1,0 +1,24 @@
+name: Daily Blog Summary
+
+on:
+  schedule:
+    - cron: '0 23 * * *'  # 한국시간 오전 8시
+  workflow_dispatch:
+
+jobs:
+  summarize:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: pip install -r 블로그\ 요약/requirements.txt
+      - name: Run summarizer
+        env:
+          SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+          SENDER_APP_PASSWORD: ${{ secrets.SENDER_APP_PASSWORD }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python 블로그\ 요약/daily_blog_summary.py
