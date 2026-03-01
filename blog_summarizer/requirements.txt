@@ -1,0 +1,5 @@
+feedparser
+pytz
+google-generativeai
+beautifulsoup4
+python-dateutil
