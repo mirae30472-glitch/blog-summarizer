@@ -27,6 +27,10 @@ def get_summary(text):
     if not GEMINI_API_KEY:
         return "- API 키가 설정되지 않아 요약을 생성할 수 없습니다."
 
+    # 블로그 내용이 너무 비어있으면 요약하지 않아요
+    if not text or len(text.strip()) < 10:
+        return "- 요약할 블로그 내용이 충분하지 않습니다."
+
     try:
         genai.configure(api_key=GEMINI_API_KEY)
         model = genai.GenerativeModel('gemini-1.5-flash')
@@ -38,18 +42,22 @@ def get_summary(text):
 1. 말투: "~했어요", "~랍니다", "추천드려요!"와 같이 부드럽고 친절한 말투를 사용해 주세요.
 2. 이모지: 문장 곳곳에 내용과 어울리는 귀여운 이모지를 풍부하게 넣어주세요.
 3. 내용 구성:
-   - 🌟 오늘의 한 줄 평: 이 글을 한 줄로 멋지게 정의해 주세요.
-   - 📝 주요 내용 세부 요약: 중요한 내용을 상세하게 설명해 주세요.
-   - 💡 나의 생각/팁: 유익한 팁이나 느낀 점을 적어주세요.
+   - 🌟 **오늘의 한 줄 평**: 이 글을 한 줄로 멋지게 정의해 주세요.
+   - 📝 **주요 내용 세부 요약**: 중요한 내용을 상세하게 설명해 주세요.
+   - 💡 **나의 생각/팁**: 유익한 팁이나 느낀 점을 적어주세요.
 
 블로그 내용:
 {text[:5000]}
 """
         response = model.generate_content(prompt)
-        return response.text.strip()
+        
+        if response and response.text:
+            return response.text.strip()
+        else:
+            return "- AI가 내용을 생성하지 못했습니다."
         
     except Exception as e:
-        return f"- 요약 생성 실패: {e}"
+        return f"- 요약 생성 중 오류 발생: {e}"
 def fetch_recent_posts():
     now_kst = datetime.now(KST)
     time_limit = now_kst - timedelta(hours=24)
@@ -149,5 +157,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
