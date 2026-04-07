@@ -41,7 +41,7 @@ def get_summary(text):
         return "- 요약할 블로그 내용이 충분하지 않습니다."
     try:
         genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-1.5-flash')
+        model = genai.GenerativeModel('gemini-2.0-flash')
         prompt = f"""당신은 아주 친절하고 상냥한 블로그 요약 전문가입니다.
 다음 블로그 글의 내용을 읽고, 아래의 규칙에 맞춰서 요약해 주세요.
 1. 말투: 부드럽고 친절한 말투를 사용해 주세요.
