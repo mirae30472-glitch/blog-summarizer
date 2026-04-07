@@ -1,4 +1,3 @@
-cat > daily_blog_summary.py << 'ENDOFFILE'
 import feedparser
 import smtplib
 import os
@@ -168,4 +167,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-ENDOFFILE
