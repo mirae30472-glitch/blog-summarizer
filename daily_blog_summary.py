@@ -1,3 +1,4 @@
+cat > daily_blog_summary.py << 'ENDOFFILE'
 import feedparser
 import smtplib
 import os
@@ -15,7 +16,7 @@ except ImportError:
     genai = None
 
 RSS_FEEDS = [
-    {"name": "ranto28", "url": "https://rss.blog.naver.com/ranto28"\}
+    {"name": "ranto28", "url": "https://rss.blog.naver.com/ranto28"}
 ]
 TO_EMAIL = "mirae30472@gmail.com"
 FROM_EMAIL = os.environ.get("SENDER_EMAIL")
@@ -167,3 +168,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+ENDOFFILE
