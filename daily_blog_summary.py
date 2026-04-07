@@ -8,7 +8,6 @@ from datetime import datetime, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from dateutil import parser as date_parser
-
 try:
     import google.generativeai as genai
 except ImportError:
