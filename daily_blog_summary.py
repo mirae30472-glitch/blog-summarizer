@@ -16,9 +16,9 @@ RSS_FEEDS = [
     {"name": "서정덕TV 블로그", "url": "https://seojdmorgan.tistory.com/rss"},
 ]
 
-EMAIL_FROM    = os.environ["EMAIL_FROM"]      # GitHub Secret
-EMAIL_TO      = os.environ["EMAIL_TO"]        # GitHub Secret
-EMAIL_PASS    = os.environ["EMAIL_PASS"]      # Gmail 앱 비밀번호
+EMAIL_FROM    = os.environ["SENDER_EMAIL"]
+EMAIL_TO      = os.environ["EMAIL_TO"]
+EMAIL_PASS    = os.environ["SENDER_APP_PASSWORD"]
 ANTHROPIC_KEY = os.environ["ANTHROPIC_API_KEY"]  # GitHub Secret
 
 KST = timezone(timedelta(hours=9))
