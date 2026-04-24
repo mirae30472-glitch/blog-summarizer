@@ -1,168 +1,152 @@
-import feedparser
-import smtplib
 import os
-import re
-import pytz
+import feedparser
 import requests
-from datetime import datetime, timedelta
+import smtplib
+from bs4 import BeautifulSoup
+from datetime import datetime, timezone, timedelta
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
-from dateutil import parser as date_parser
-try:
-    import google.generativeai as genai
-except ImportError:
-    genai = None
+import anthropic
 
+# ────────────────────────────────────────────
+# 설정
+# ────────────────────────────────────────────
 RSS_FEEDS = [
-    {"name": "ranto28", "url": "https://rss.blog.naver.com/ranto28"}
+    {"name": "ranto28 블로그", "url": "https://rss.blog.naver.com/ranto28"},
+    {"name": "서정덕TV 블로그", "url": "https://seojdmorgan.tistory.com/rss"},
 ]
-TO_EMAIL = "mirae30472@gmail.com"
-FROM_EMAIL = os.environ.get("SENDER_EMAIL")
-EMAIL_PASSWORD = os.environ.get("SENDER_APP_PASSWORD")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
-KST = pytz.timezone('Asia/Seoul')
+EMAIL_FROM    = os.environ["EMAIL_FROM"]      # GitHub Secret
+EMAIL_TO      = os.environ["EMAIL_TO"]        # GitHub Secret
+EMAIL_PASS    = os.environ["EMAIL_PASS"]      # Gmail 앱 비밀번호
+ANTHROPIC_KEY = os.environ["ANTHROPIC_API_KEY"]  # GitHub Secret
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
+KST = timezone(timedelta(hours=9))
+HOURS_LIMIT = 24  # 최근 몇 시간 이내 글만 가져올지
 
-def clean_html(text):
-    clean = re.sub(r'<[^>]+>', '', text)
-    clean = re.sub(r'\s+', ' ', clean).strip()
-    return clean
 
-def get_summary(text):
-    if not GEMINI_API_KEY:
-        return "- API 키가 설정되지 않아 요약을 생성할 수 없습니다."
-    if not genai:
-        return "- google-generativeai 라이브러리가 설치되지 않았습니다."
-    if not text or len(text.strip()) < 10:
-        return "- 요약할 블로그 내용이 충분하지 않습니다."
-    try:
-        genai.configure(api_key=GEMINI_API_KEY)
-        model = genai.GenerativeModel('gemini-2.0-flash')
-        prompt = f"""당신은 아주 친절하고 상냥한 블로그 요약 전문가입니다.
-다음 블로그 글의 내용을 읽고, 아래의 규칙에 맞춰서 요약해 주세요.
-1. 말투: 부드럽고 친절한 말투를 사용해 주세요.
-2. 이모지: 문장 곳곳에 내용과 어울리는 이모지를 넣어주세요.
-3. 내용 구성:
-   - 🌟 오늘의 한 줄 평
-   - 📝 주요 내용 세부 요약
-   - 💡 나의 생각/팁
+# ────────────────────────────────────────────
+# 1. RSS에서 최근 글 목록 가져오기
+# ────────────────────────────────────────────
+def get_recent_entries(feed_url: str) -> list[dict]:
+    feed = feedparser.parse(feed_url)
+    now = datetime.now(KST)
+    results = []
 
-블로그 내용:
-{text[:5000]}"""
-        response = model.generate_content(prompt)
-        if response and response.text:
-            return response.text.strip()
+    for entry in feed.entries:
+        # 날짜 파싱
+        if hasattr(entry, "published_parsed") and entry.published_parsed:
+            pub = datetime(*entry.published_parsed[:6], tzinfo=timezone.utc).astimezone(KST)
         else:
-            return "- AI가 내용을 생성하지 못했습니다."
-    except Exception as e:
-        return f"- 요약 생성 중 오류 발생: {e}"
+            continue  # 날짜 없으면 스킵
 
-def fetch_rss_with_requests(url):
+        if (now - pub).total_seconds() <= HOURS_LIMIT * 3600:
+            results.append({
+                "title": entry.title,
+                "link":  entry.link,
+                "date":  pub.strftime("%Y-%m-%d %H:%M"),
+            })
+
+    return results
+
+
+# ────────────────────────────────────────────
+# 2. 본문 스크래핑
+# ────────────────────────────────────────────
+def scrape_content(url: str) -> str:
+    headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
-        response.raise_for_status()
-        print(f"  RSS 응답 코드: {response.status_code}, 크기: {len(response.content)} bytes")
-        return feedparser.parse(response.content)
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, "html.parser")
+
+        # 네이버 블로그
+        for selector in ["div.se-main-container", "div#postViewArea"]:
+            tag = soup.select_one(selector)
+            if tag:
+                return tag.get_text(separator="\n", strip=True)[:3000]
+
+        # 티스토리
+        for selector in ["div.entry-content", "div.article-view", "div#content"]:
+            tag = soup.select_one(selector)
+            if tag:
+                return tag.get_text(separator="\n", strip=True)[:3000]
+
+        # 그 외 — body 전체 텍스트
+        return soup.get_text(separator="\n", strip=True)[:3000]
+
     except Exception as e:
-        print(f"  RSS 요청 실패: {e}, feedparser 직접 시도...")
-        return feedparser.parse(url)
+        return f"[본문 가져오기 실패: {e}]"
 
-def fetch_recent_posts():
-    now_kst = datetime.now(KST)
-    time_limit = now_kst - timedelta(hours=48)
-    recent_posts = []
-    error_logs = []
-    for feed_info in RSS_FEEDS:
-        print(f"\n{feed_info['name']} RSS 가져오는 중... ({feed_info['url']})")
-        parsed_feed = fetch_rss_with_requests(feed_info["url"])
-        if parsed_feed.bozo:
-            error_logs.append(f"{feed_info['name']} RSS 파싱 경고: {parsed_feed.bozo_exception}")
-        entry_count = len(parsed_feed.entries)
-        print(f"  총 {entry_count}개 글 발견")
-        if entry_count == 0:
-            error_logs.append(f"{feed_info['name']}: RSS에서 글을 못 가져왔습니다.")
-            continue
-        blog_title = parsed_feed.feed.title if 'title' in parsed_feed.feed else feed_info["name"]
-        for i, entry in enumerate(parsed_feed.entries):
-            try:
-                if 'published' in entry:
-                    entry_date = date_parser.parse(entry.published)
-                elif 'updated' in entry:
-                    entry_date = date_parser.parse(entry.updated)
-                else:
-                    continue
-                if entry_date.tzinfo is None:
-                    entry_date = KST.localize(entry_date)
-                else:
-                    entry_date = entry_date.astimezone(KST)
-                if i < 3:
-                    print(f"  [{i}] {entry.title[:30]}... -> {entry_date.strftime('%Y-%m-%d %H:%M')} KST")
-                if entry_date >= time_limit:
-                    content = entry.description if 'description' in entry else entry.title
-                    if 'content' in entry and len(entry.content) > 0:
-                        content = entry.content[0].value
-                    cleaned_content = clean_html(content)
-                    recent_posts.append({
-                        "blog_name": blog_title,
-                        "title": entry.title,
-                        "date": entry_date,
-                        "link": entry.link,
-                        "content": cleaned_content
-                    })
-            except Exception as e:
-                error_logs.append(f"{feed_info['name']} 글 파싱 오류: {e}")
-    recent_posts.sort(key=lambda x: x["date"], reverse=True)
-    return recent_posts, error_logs
 
-def send_email(subject, body):
-    if not FROM_EMAIL or not EMAIL_PASSWORD:
-        print("이메일 발신 정보 없음. 터미널에만 출력합니다.")
-        print(f"제목: {subject}\n\n{body}")
-        return
-    msg = MIMEMultipart()
-    msg['From'] = FROM_EMAIL
-    msg['To'] = TO_EMAIL
-    msg['Subject'] = subject
-    msg.attach(MIMEText(body, 'plain', 'utf-8'))
-    try:
-        server = smtplib.SMTP('smtp.gmail.com', 587)
-        server.starttls()
-        server.login(FROM_EMAIL, EMAIL_PASSWORD)
-        server.send_message(msg)
-        server.quit()
-        print("이메일 발송 성공!")
-    except Exception as e:
-        print(f"이메일 발송 실패: {e}")
+# ────────────────────────────────────────────
+# 3. Claude API로 3줄 요약
+# ────────────────────────────────────────────
+def summarize(title: str, content: str) -> str:
+    if content.startswith("[본문 가져오기 실패"):
+        return content
 
+    client = anthropic.Anthropic(api_key=ANTHROPIC_KEY)
+    prompt = f"제목: {title}\n\n본문:\n{content}\n\n위 블로그 글을 핵심 내용 3줄로 요약해줘. 한국어로."
+
+    msg = client.messages.create(
+        model="claude-sonnet-4-6",
+        max_tokens=300,
+        messages=[{"role": "user", "content": prompt}],
+    )
+    return msg.content[0].text.strip()
+
+
+# ────────────────────────────────────────────
+# 4. 이메일 발송
+# ────────────────────────────────────────────
+def send_email(body: str):
+    today = datetime.now(KST).strftime("%Y-%m-%d")
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = f"📰 오늘의 블로그 요약 - {today}"
+    msg["From"]    = EMAIL_FROM
+    msg["To"]      = EMAIL_TO
+    msg.attach(MIMEText(body, "plain", "utf-8"))
+
+    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+        server.login(EMAIL_FROM, EMAIL_PASS)
+        server.sendmail(EMAIL_FROM, EMAIL_TO, msg.as_string())
+    print("✅ 이메일 발송 완료")
+
+
+# ────────────────────────────────────────────
+# 메인
+# ────────────────────────────────────────────
 def main():
-    print(f"블로그 새 글 확인 시작... ({datetime.now(KST).strftime('%Y-%m-%d %H:%M:%S KST')})")
-    recent_posts, error_logs = fetch_recent_posts()
-    today_str = datetime.now(KST).strftime('%Y년 %m월 %d일')
-    subject = f"📰 오늘의 블로그 요약 - {today_str}"
-    if not recent_posts:
-        if error_logs:
-            body = "⚠️ 블로그 요약 중 문제 발생:\n\n" + "\n".join(error_logs)
-            body += "\n\n---\n48시간 이내 새 글도 발견되지 않았습니다."
-        else:
-            body = "오늘 새 글 없음 (48시간 이내 새 글 없음)"
+    all_items = []  # (date_str, blog_name, title, summary, link)
+
+    for feed in RSS_FEEDS:
+        entries = get_recent_entries(feed["url"])
+        for e in entries:
+            print(f"  스크래핑 중: {e['title']}")
+            content = scrape_content(e["link"])
+            summary = summarize(e["title"], content)
+            all_items.append((e["date"], feed["name"], e["title"], summary, e["link"]))
+
+    # 최신순 정렬
+    all_items.sort(key=lambda x: x[0], reverse=True)
+
+    if not all_items:
+        body = "오늘 새 글 없음"
     else:
-        body_lines = []
-        for post in recent_posts:
-            summary = get_summary(post["content"])
-            date_str = post["date"].strftime('%Y-%m-%d %H:%M')
-            post_text = f"[{post['blog_name']}]\n"
-            post_text += f"✅ 제목: {post['title']}\n"
-            post_text += f"📅 작성일: {date_str}\n"
-            post_text += f"📝 핵심 내용 요약\n{summary}\n"
-            post_text += f"🔗 링크: {post['link']}"
-            body_lines.append(post_text)
-        body = "\n\n".join(body_lines)
-    print(f"\n=== 요약 결과 ===\n{subject}\n\n{body}")
-    send_email(subject, body)
+        lines = []
+        for date, blog, title, summary, link in all_items:
+            lines.append(f"[{blog}]")
+            lines.append(f"✅ {title}")
+            lines.append(f"📅 {date}")
+            lines.append(f"📝 {summary}")
+            lines.append(f"🔗 {link}")
+            lines.append("")
+        body = "\n".join(lines)
+
+    print(body)
+    send_email(body)
+
 
 if __name__ == "__main__":
     main()
