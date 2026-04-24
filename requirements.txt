@@ -1,5 +1,4 @@
 feedparser
-pytz
-google-generativeai
+requests
 beautifulsoup4
-python-dateutil
+anthropic
